@@ -1,0 +1,215 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>StudyMate — AI PDF Q&A (MVP)</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f5f9ff; padding: 18px; }
+    .wrap { max-width: 900px; margin: 0 auto; background: white; padding:20px; border-radius:10px; box-shadow:0 6px 20px rgba(0,0,0,0.08);}
+    h1 { color: #024; }
+    .row { display:flex; gap: 12px; margin-bottom:12px; align-items:center;}
+    input[type="text"], textarea, select { width:100%; padding:10px; border-radius:6px; border:1px solid #ddd; }
+    button { padding:8px 12px; border-radius:6px; background:#0077cc; color:white; border:none; cursor:pointer; }
+    pre { background:#f2f2f2; padding:12px; border-radius:6px; overflow:auto; max-height:200px; }
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .small { font-size: 0.9rem; color:#555; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>StudyMate — AI PDF Q&A (MVP)</h1>
+    <p class="small">Upload PDFs, ask questions constrained to the uploaded documents, capture diagrams via camera, or speak your question. Select explanation level and generate flashcards/quizzes.</p>
+
+    <div class="row">
+      <label>Room name:</label>
+      <input id="roomName" type="text" placeholder="class-chemistry" value="default">
+      <button onclick="createRoom()">Create / Join Room</button>
+      <div id="roomInfo" class="small"></div>
+    </div>
+
+    <hr/>
+
+    <h3>Upload PDF (to current room)</h3>
+    <div class="row">
+      <input type="file" id="pdfFile" accept="application/pdf">
+      <button onclick="uploadPdf()">Upload</button>
+    </div>
+
+    <h3>Ask (context-aware from uploaded PDFs)</h3>
+    <div class="row">
+      <select id="levelSelect">
+        <option value="default">Default</option>
+        <option value="child">Explain like I'm 10</option>
+        <option value="exam">Exam Prep</option>
+        <option value="professor">Professor-level</option>
+      </select>
+      <input id="pdfQuestion" type="text" placeholder="Ask a question that uses uploaded PDFs">
+      <button onclick="askPdf()">Ask PDF</button>
+    </div>
+    <pre id="pdfAnswer">Responses will appear here...</pre>
+
+    <h3>Text Q&A (no upload required)</h3>
+    <div class="row">
+      <select id="levelText">
+        <option value="default">Default</option>
+        <option value="child">Explain like I'm 10</option>
+        <option value="exam">Exam Prep</option>
+        <option value="professor">Professor-level</option>
+      </select>
+      <input id="textQuestion" type="text" placeholder="Type a question">
+      <button onclick="askText()">Ask</button>
+    </div>
+    <pre id="textAnswer"></pre>
+
+    <div class="two">
+      <div>
+        <h3>Camera Q&A (diagram)</h3>
+        <video id="video" width="320" height="240" autoplay></video><br/>
+        <button onclick="capture()">Capture & Ask</button>
+        <input id="imgQuestion" type="text" placeholder="Ask about diagram">
+        <img id="snap" style="max-width:320px; display:block; margin-top:8px;">
+        <pre id="imgAnswer"></pre>
+      </div>
+
+      <div>
+        <h3>Voice Q&A</h3>
+        <div class="row">
+          <button onclick="startRecording()">Start (auto stop 5s)</button>
+          <button onclick="stopRecording()">Stop</button>
+        </div>
+        <pre id="voiceAnswer"></pre>
+
+        <h3>Flashcards & Quiz</h3>
+        <div class="row">
+          <input id="numCards" type="number" value="6" min="1" max="20">
+          <button onclick="genFlashcards()">Generate Flashcards</button>
+        </div>
+        <pre id="flashcards"></pre>
+
+        <div class="row">
+          <input id="numQuiz" type="number" value="5" min="1" max="20">
+          <button onclick="genQuiz()">Generate Quiz</button>
+        </div>
+        <pre id="quiz"></pre>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+let currentRoomId = null;
+
+// create/join room
+async function createRoom(){
+  const name = document.getElementById('roomName').value;
+  const res = await fetch('/room', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({room_name: name}) });
+  const j = await res.json();
+  currentRoomId = j.room_id;
+  document.getElementById('roomInfo').innerText = `Joined room ${j.room_name} (id=${j.room_id})`;
+}
+
+// upload PDF
+async function uploadPdf(){
+  if(!currentRoomId){ alert("Create or join a room first."); return; }
+  const f = document.getElementById('pdfFile').files[0];
+  if(!f){ alert("Choose a PDF"); return; }
+  const fd = new FormData();
+  fd.append('pdf', f);
+  fd.append('room_id', currentRoomId);
+  const res = await fetch('/upload_pdf', { method:'POST', body: fd });
+  const j = await res.json();
+  alert("Uploaded: " + j.filename);
+}
+
+// ask using uploaded PDFs
+async function askPdf(){
+  if(!currentRoomId){ alert("Create or join room."); return; }
+  const question = document.getElementById('pdfQuestion').value;
+  const level = document.getElementById('levelSelect').value;
+  const fd = new FormData();
+  fd.append('room_id', currentRoomId);
+  fd.append('question', question);
+  fd.append('level', level);
+  const res = await fetch('/ask_pdf', { method:'POST', body: fd });
+  const j = await res.json();
+  document.getElementById('pdfAnswer').innerText = j.answer || JSON.stringify(j, null, 2);
+}
+
+// text Q&A
+async function askText(){
+  const q = document.getElementById('textQuestion').value;
+  const level = document.getElementById('levelText').value;
+  const res = await fetch('/ask_text', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: q, level: level})});
+  const j = await res.json();
+  document.getElementById('textAnswer').innerText = j.answer || JSON.stringify(j, null, 2);
+}
+
+// Camera setup
+const video = document.getElementById('video');
+const snap = document.getElementById('snap');
+navigator.mediaDevices.getUserMedia({ video: true, audio:false }).then(stream => {
+  video.srcObject = stream;
+}).catch(e => console.warn("Camera not available", e));
+
+function capture(){
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth || 320;
+  canvas.height = video.videoHeight || 240;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+  const dataUrl = canvas.toDataURL('image/png');
+  snap.src = dataUrl;
+  const question = document.getElementById('imgQuestion').value || "Explain this diagram.";
+  fetch('/ask_image', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ image: dataUrl, question: question })})
+    .then(r=>r.json()).then(j => { document.getElementById('imgAnswer').innerText = j.answer || JSON.stringify(j, null,2); });
+}
+
+// Voice recording (MediaRecorder)
+let mediaRecorder, chunks=[];
+async function startRecording(){
+  const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(s);
+  chunks = [];
+  mediaRecorder.ondataavailable = e => chunks.push(e.data);
+  mediaRecorder.onstop = async () => {
+    const blob = new Blob(chunks, { type: 'audio/webm' });
+    const b64 = await blobToBase64(blob);
+    document.getElementById('voiceAnswer').innerText = "Sending audio...";
+    const res = await fetch('/ask_voice', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: b64 })});
+    const j = await res.json();
+    document.getElementById('voiceAnswer').innerText = j.answer || JSON.stringify(j, null, 2);
+  };
+  mediaRecorder.start();
+  // auto stop after 5s
+  setTimeout(()=> { if(mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop(); }, 5000);
+}
+function stopRecording(){ if(mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop(); }
+function blobToBase64(blob){
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Flashcards
+async function genFlashcards(){
+  if(!currentRoomId){ alert("Create room first"); return; }
+  const num = document.getElementById('numCards').value;
+  const res = await fetch('/flashcards', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({room_id: currentRoomId, num: num})});
+  const j = await res.json();
+  document.getElementById('flashcards').innerText = j.flashcards_raw || JSON.stringify(j, null,2);
+}
+
+// Quiz
+async function genQuiz(){
+  if(!currentRoomId){ alert("Create room first"); return; }
+  const num = document.getElementById('numQuiz').value;
+  const res = await fetch('/quiz', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({room_id: currentRoomId, num: num})});
+  const j = await res.json();
+  document.getElementById('quiz').innerText = j.quiz_raw || JSON.stringify(j, null,2);
+}
+</script>
+</body>
+</html>
